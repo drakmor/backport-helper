@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Prospero">
+      <Configuration>Debug</Configuration>
+      <Platform>Prospero</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Prospero">
+      <Configuration>Release</Configuration>
+      <Platform>Prospero</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Backport4|Prospero">
+      <Configuration>Backport4</Configuration>
+      <Platform>Prospero</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Backport5|Prospero">
+      <Configuration>Backport5</Configuration>
+      <Platform>Prospero</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Backport6|Prospero">
+      <Configuration>Backport6</Configuration>
+      <Platform>Prospero</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Backport7|Prospero">
+      <Configuration>Backport7</Configuration>
+      <Platform>Prospero</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Backport8|Prospero">
+      <Configuration>Backport8</Configuration>
+      <Platform>Prospero</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Backport9|Prospero">
+      <Configuration>Backport9</Configuration>
+      <Platform>Prospero</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Backport10|Prospero">
+      <Configuration>Backport10</Configuration>
+      <Platform>Prospero</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Backport11|Prospero">
+      <Configuration>Backport11</Configuration>
+      <Platform>Prospero</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Backport12|Prospero">
+      <Configuration>Backport12</Configuration>
+      <Platform>Prospero</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Backport13|Prospero">
+      <Configuration>Backport13</Configuration>
+      <Platform>Prospero</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{2BCF8E61-AE7A-4A7B-9DE0-8F28EB5AC0E1}</ProjectGuid>
+    <ProjectName>libSceRtc</ProjectName>
+    <ProsperoSdkVersion>2.000</ProsperoSdkVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Prospero'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Prospero'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Backport4|Prospero'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Backport5|Prospero'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Backport6|Prospero'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Backport7|Prospero'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Backport8|Prospero'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Backport9|Prospero'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Backport10|Prospero'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Backport11|Prospero'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Backport12|Prospero'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Backport13|Prospero'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Prospero'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Prospero'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)'=='Backport4' or '$(Configuration)'=='Backport5' or '$(Configuration)'=='Backport6' or '$(Configuration)'=='Backport7' or '$(Configuration)'=='Backport8' or '$(Configuration)'=='Backport9' or '$(Configuration)'=='Backport10' or '$(Configuration)'=='Backport11' or '$(Configuration)'=='Backport12' or '$(Configuration)'=='Backport13'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <BackportSdk Condition="'$(BackportSdk)'==''">13</BackportSdk>
+    <BackportExtraPreprocessorDefinitions Condition="'$(BackportExtraPreprocessorDefinitions)'==''"></BackportExtraPreprocessorDefinitions>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Backport4'">
+    <BackportSdk>4</BackportSdk>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Backport5'">
+    <BackportSdk>5</BackportSdk>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Backport6'">
+    <BackportSdk>6</BackportSdk>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Backport7'">
+    <BackportSdk>7</BackportSdk>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Backport8'">
+    <BackportSdk>8</BackportSdk>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Backport9'">
+    <BackportSdk>9</BackportSdk>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Backport10'">
+    <BackportSdk>10</BackportSdk>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Backport11'">
+    <BackportSdk>11</BackportSdk>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Backport12'">
+    <BackportSdk>12</BackportSdk>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Backport13'">
+    <BackportSdk>13</BackportSdk>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Prospero'">
+    <TargetExt>.prx</TargetExt>
+    <PostBuildEventUseInBuild>false</PostBuildEventUseInBuild>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Prospero'">
+    <TargetExt>.prx</TargetExt>
+    <OutDir>.\out\</OutDir>
+    <PostBuildEventUseInBuild>false</PostBuildEventUseInBuild>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Backport4' or '$(Configuration)'=='Backport5' or '$(Configuration)'=='Backport6' or '$(Configuration)'=='Backport7' or '$(Configuration)'=='Backport8' or '$(Configuration)'=='Backport9' or '$(Configuration)'=='Backport10' or '$(Configuration)'=='Backport11' or '$(Configuration)'=='Backport12' or '$(Configuration)'=='Backport13'">
+    <TargetExt>.prx</TargetExt>
+    <OutDir>$(ProjectDir)out\sdk$(BackportSdk)\</OutDir>
+    <IntDir>$(ProjectDir)Prospero_Release_sdk$(BackportSdk)\</IntDir>
+    <PostBuildEventUseInBuild>false</PostBuildEventUseInBuild>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Prospero'">
+    <ClCompile>
+      <PreprocessorDefinitions>_DEBUG;BACKPORT_SDK=$(BackportSdk);$(BackportExtraPreprocessorDefinitions);%(PreprocessorDefinitions);</PreprocessorDefinitions>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalOptions>-fPIC -fno-stack-protector %(AdditionalOptions)</AdditionalOptions>
+      <CppLanguageStd>Cpp20</CppLanguageStd>
+      <CLanguageStd>C17</CLanguageStd>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>$(OutDir)libkernel_extra_stub_weak.a;$(OutDir)libSceLibcInternal_stub_weak.a;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>-Wl,--as-needed %(AdditionalOptions)</AdditionalOptions>
+      <ImportLibrary>libSceRtc.prx</ImportLibrary>
+      <DataStripping>true</DataStripping>
+      <InfoStripping>StripSymsAndDebug</InfoStripping>
+    </Link>
+    <ProjectReference>
+      <UseLibraryDependencyInputs>true</UseLibraryDependencyInputs>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Prospero' or '$(Configuration)'=='Backport4' or '$(Configuration)'=='Backport5' or '$(Configuration)'=='Backport6' or '$(Configuration)'=='Backport7' or '$(Configuration)'=='Backport8' or '$(Configuration)'=='Backport9' or '$(Configuration)'=='Backport10' or '$(Configuration)'=='Backport11' or '$(Configuration)'=='Backport12' or '$(Configuration)'=='Backport13'">
+    <ClCompile>
+      <PreprocessorDefinitions>NDEBUG;BACKPORT_SDK=$(BackportSdk);$(BackportExtraPreprocessorDefinitions);%(PreprocessorDefinitions);</PreprocessorDefinitions>
+      <OptimizationLevel>Level2</OptimizationLevel>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalOptions>-fPIC -fno-stack-protector %(AdditionalOptions)</AdditionalOptions>
+      <CppLanguageStd>Cpp20</CppLanguageStd>
+      <CLanguageStd>C17</CLanguageStd>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>$(OutDir)libkernel_extra_stub_weak.a;$(OutDir)libSceLibcInternal_stub_weak.a;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>-Wl,--as-needed %(AdditionalOptions)</AdditionalOptions>
+      <ImportLibrary>libSceRtc.prx</ImportLibrary>
+      <DataStripping>true</DataStripping>
+      <InfoStripping>StripSymsAndDebug</InfoStripping>
+    </Link>
+    <ProjectReference>
+      <UseLibraryDependencyInputs>true</UseLibraryDependencyInputs>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="backport_hooks.cpp" />
+    <ClCompile Include="backports.cpp" />
+    <ClCompile Include="hde64.cpp" />
+    <ClCompile Include="hooks.cpp" />
+    <ClCompile Include="rtc.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="hde64.h" />
+    <ClInclude Include="hooks.h" />
+    <ClInclude Include="rtc.h" />
+    <ClInclude Include="table64.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="tools\nidmaps\libSceRtc.raw-nids.txt" />
+    <None Include="tools\prx_rename_nids_auto.py" />
+  </ItemGroup>
+  <Target Name="GenerateRtcLibcInternalStub" BeforeTargets="Link">
+    <Exec WorkingDirectory="$(ProjectDir)" Command="python &quot;$(ProjectDir)tools\make_libc_internal_stub.py&quot; --out &quot;$(OutDir)libSceLibcInternal_stub_weak.a&quot;" />
+    <Exec WorkingDirectory="$(ProjectDir)" Command="python &quot;$(ProjectDir)tools\make_kernel_extra_stub.py&quot; --out &quot;$(OutDir)libkernel_extra_stub_weak.a&quot;" />
+  </Target>
+  <Target Name="RenameRawPrxNids" AfterTargets="Link">
+    <Message Importance="High" Text="Renaming raw NID exports in $(TargetPath)" />
+    <Exec WorkingDirectory="$(ProjectDir)" Command="python &quot;$(ProjectDir)tools\prx_rename_nids_auto.py&quot; &quot;$(TargetPath)&quot; &quot;$(TargetPath)&quot; --map &quot;$(ProjectDir)tools\nidmaps\libSceRtc.raw-nids.txt&quot; --allow-missing" />
+  </Target>
+  <Target Name="Backport4">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Rebuild" Properties="Configuration=Release;Platform=Prospero;BackportSdk=4;BuildingBackport=true;OutDir=$(ProjectDir)out\sdk4\;IntDir=$(ProjectDir)Prospero_Release_sdk4\" />
+  </Target>
+  <Target Name="Backport5">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Rebuild" Properties="Configuration=Release;Platform=Prospero;BackportSdk=5;BuildingBackport=true;OutDir=$(ProjectDir)out\sdk5\;IntDir=$(ProjectDir)Prospero_Release_sdk5\" />
+  </Target>
+  <Target Name="Backport6">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Rebuild" Properties="Configuration=Release;Platform=Prospero;BackportSdk=6;BuildingBackport=true;OutDir=$(ProjectDir)out\sdk6\;IntDir=$(ProjectDir)Prospero_Release_sdk6\" />
+  </Target>
+  <Target Name="Backport7">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Rebuild" Properties="Configuration=Release;Platform=Prospero;BackportSdk=7;BuildingBackport=true;OutDir=$(ProjectDir)out\sdk7\;IntDir=$(ProjectDir)Prospero_Release_sdk7\" />
+  </Target>
+  <Target Name="Backport8">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Rebuild" Properties="Configuration=Release;Platform=Prospero;BackportSdk=8;BuildingBackport=true;OutDir=$(ProjectDir)out\sdk8\;IntDir=$(ProjectDir)Prospero_Release_sdk8\" />
+  </Target>
+  <Target Name="Backport9">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Rebuild" Properties="Configuration=Release;Platform=Prospero;BackportSdk=9;BuildingBackport=true;OutDir=$(ProjectDir)out\sdk9\;IntDir=$(ProjectDir)Prospero_Release_sdk9\" />
+  </Target>
+  <Target Name="Backport10">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Rebuild" Properties="Configuration=Release;Platform=Prospero;BackportSdk=10;BuildingBackport=true;OutDir=$(ProjectDir)out\sdk10\;IntDir=$(ProjectDir)Prospero_Release_sdk10\" />
+  </Target>
+  <Target Name="Backport11">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Rebuild" Properties="Configuration=Release;Platform=Prospero;BackportSdk=11;BuildingBackport=true;OutDir=$(ProjectDir)out\sdk11\;IntDir=$(ProjectDir)Prospero_Release_sdk11\" />
+  </Target>
+  <Target Name="Backport12">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Rebuild" Properties="Configuration=Release;Platform=Prospero;BackportSdk=12;BuildingBackport=true;OutDir=$(ProjectDir)out\sdk12\;IntDir=$(ProjectDir)Prospero_Release_sdk12\" />
+  </Target>
+  <Target Name="Backport13">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Rebuild" Properties="Configuration=Release;Platform=Prospero;BackportSdk=13;BuildingBackport=true;OutDir=$(ProjectDir)out\sdk13\;IntDir=$(ProjectDir)Prospero_Release_sdk13\" />
+  </Target>
+  <Target Name="BackportAll" DependsOnTargets="Backport4;Backport5;Backport6;Backport7;Backport8;Backport9;Backport10;Backport11;Backport12;Backport13" />
+  <Target Name="BuildBackportVariants" AfterTargets="Build" Condition="'$(BuildingBackport)' != 'true' and '$(Configuration)|$(Platform)' == 'Release|Prospero'">
+    <CallTarget Targets="BackportAll" />
+  </Target>
+  <Import Condition="'$(ConfigurationType)' == 'Makefile' and Exists('$(VCTargetsPath)\Platforms\$(Platform)\SCE.Makefile.$(Platform).targets')" Project="$(VCTargetsPath)\Platforms\$(Platform)\SCE.Makefile.$(Platform).targets" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

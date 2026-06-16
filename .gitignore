@@ -1,0 +1,44 @@
+# Reference binaries and IDA databases
+refs/
+
+# Prospero / Visual Studio build output
+out/
+Prospero_Debug/
+Prospero_Release/
+Prospero_Release_sdk*/
+Debug/
+Release/
+x64/
+.vs/
+
+# MSBuild logs and intermediates
+*.log
+*.tlog/
+*.lastbuildstate
+*.unsuccessfulbuild
+*.obj
+*.o
+*.pch
+*.pdb
+*.ilk
+*.idb
+*.iobj
+*.ipdb
+
+# Generated PlayStation artifacts
+*.prx
+*.sprx
+*.self
+*.elf
+*_stub.a
+*_stub_weak.a
+
+# Local/editor noise
+.idea/
+.vscode/
+*.user
+*.suo
+*.tmp
+*.bak
+Thumbs.db
+Desktop.ini

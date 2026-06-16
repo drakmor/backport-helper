@@ -1,0 +1,8 @@
+# local export name = raw target NID required in the PRX
+#
+# Add entries here when the original export name is unknown but the NID is known.
+# The build script computes the temporary lld NID from the local export name,
+# replaces it with the raw target NID, and rebuilds the PRX .hash table.
+#
+# Example:
+# backportRawNid_ReplaceMe=AAAAAAAAAAA
