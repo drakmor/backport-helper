@@ -4,14 +4,23 @@
 #include "rtc.h"
 
 #include <_kernel.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/mman.h>
 
 extern "C" int sceKernelDlsym(SceKernelModule handle, const char* symbol, void** addrp);
 extern "C" int sceKernelMprotect(const void* addr, size_t len, int prot);
-extern "C" int sceKernelMapFlexibleMemory(void** addr, size_t len, int prot, int flags);
-extern "C" int sceKernelMunmap(void* addr, size_t len);
+extern "C" int* __error(void);
+extern "C" int sceKernelDebugOutText(int channel, const char* text);
+extern "C" int sceKernelGetModuleList(SceKernelModule* modules, size_t capacity, size_t* actualNum);
+extern "C" int sceKernelGetModuleInfo(SceKernelModule module, void* info);
+extern "C" SceKernelModule sceKernelLoadStartModuleForSysmodule(const char* moduleFileName,
+                                                                size_t args,
+                                                                const void* argp,
+                                                                uint32_t flags,
+                                                                const SceKernelLoadModuleOpt* pOpt,
+                                                                int* pRes);
 
 namespace {
 
@@ -20,9 +29,12 @@ constexpr size_t kMaxStolenBytes = 64;
 constexpr size_t kTrampolinePageSize = SCE_KERNEL_PAGE_SIZE;
 constexpr size_t kTrampolineSize = 512;
 constexpr size_t kTrampolineSlotsPerPage = kTrampolinePageSize / kTrampolineSize;
-constexpr SceKernelModule kLibkernelHandle = 0x2001;
 constexpr int kCodeProt = SCE_KERNEL_PROT_CPU_READ | SCE_KERNEL_PROT_CPU_EXEC;
 constexpr int kRwProt = SCE_KERNEL_PROT_CPU_ALL;
+constexpr size_t kLoadStartModuleBodyOffset = 0x20;
+constexpr const char* kLoadStartModuleSymbol = "sceKernelLoadStartModule";
+static_assert((kTrampolinePageSize % kTrampolineSize) == 0, "trampoline slots must divide the page size");
+static_assert(kTrampolineSlotsPerPage <= 32, "trampoline slot bitmap is uint32_t");
 
 struct InlineDetour {
     void* target;
@@ -33,35 +45,83 @@ struct InlineDetour {
     bool installed;
 };
 
+struct TinyDetour {
+    void* target;
+    void* replacement;
+    uint8_t original[11];
+    bool installed;
+};
+
 struct InstalledHook {
     const char* symbol;
+    void* target;
     void* replacement;
     bool optional;
     InlineDetour detour;
 };
 
-struct LateDlsymHook {
+struct LateFunctionHook {
     const char* moduleName;
     const char* symbol;
     void* replacement;
-    void* original;
+    InlineDetour detour;
 };
 
-using SceKernelDlsymFn = int (*)(SceKernelModule, const char*, void**);
+struct KernelModuleInfoCompat {
+    uint64_t size;
+    char name[256];
+    uint8_t reserved[0x160 - sizeof(uint64_t) - 256];
+};
+static_assert(sizeof(KernelModuleInfoCompat) == 0x160, "kernel module info size must match libkernel");
+
+struct ErrnoGuard {
+    int* slot;
+    int value;
+
+    ErrnoGuard() : slot(__error()), value(slot ? *slot : 0) {}
+    ~ErrnoGuard() {
+        if (slot) {
+            *slot = value;
+        }
+    }
+};
+
+using SceKernelLoadStartModuleFn =
+    SceKernelModule (*)(const char*, size_t, const void*, uint32_t, const SceKernelLoadModuleOpt*, int*);
+
+SceKernelModule sceKernelLoadStartModule_hook(const char* moduleFileName,
+                                              size_t args,
+                                              const void* argp,
+                                              uint32_t flags,
+                                              const SceKernelLoadModuleOpt* pOpt,
+                                              int* pRes);
+SceKernelModule sceKernelLoadStartModuleForSysmodule_hook(const char* moduleFileName,
+                                                          size_t args,
+                                                          const void* argp,
+                                                          uint32_t flags,
+                                                          const SceKernelLoadModuleOpt* pOpt,
+                                                          int* pRes);
 
 constexpr size_t kMaxHookSpecs = 32;
-constexpr size_t kMaxLateDlsymHookSpecs = 32;
-constexpr size_t kMaxInlineDetours = kMaxHookSpecs + 1u;
+constexpr size_t kMaxLateHookSpecs = 32;
+constexpr size_t kMaxInlineDetours = kMaxHookSpecs + kMaxLateHookSpecs;
 constexpr size_t kMaxTrampolinePages = (kMaxInlineDetours + kTrampolineSlotsPerPage - 1u) / kTrampolineSlotsPerPage;
+constexpr size_t kMaxLoadedModuleScan = 0x400;
 
 InstalledHook g_hooks[kMaxHookSpecs] = {};
 size_t g_hookCount = 0;
-LateDlsymHook g_lateDlsymHooks[kMaxLateDlsymHookSpecs] = {};
-size_t g_lateDlsymHookCount = 0;
-InlineDetour g_dlsymDetour = {};
-void* g_trampolinePages[kMaxTrampolinePages] = {};
+LateFunctionHook g_lateHooks[kMaxLateHookSpecs] = {};
+size_t g_lateHookCount = 0;
+SceKernelModule g_loadedModuleScan[kMaxLoadedModuleScan] = {};
+KernelModuleInfoCompat g_loadedModuleInfo = {};
+alignas(SCE_KERNEL_PAGE_SIZE) uint8_t g_trampolineStorage[kMaxTrampolinePages][kTrampolinePageSize] = {};
 uint32_t g_trampolinePageUsed[kMaxTrampolinePages] = {};
+int g_trampolinePageProt[kMaxTrampolinePages] = {};
 int g_hooksInstalled = 0;
+int g_lateHookInstallDepth = 0;
+int g_loadStartHookDepth = 0;
+void* g_loadStartModuleBody = nullptr;
+TinyDetour g_loadStartModuleForSysmoduleDetour = {};
 
 uintptr_t page_floor(uintptr_t value) {
     return value & ~(static_cast<uintptr_t>(SCE_KERNEL_PAGE_SIZE) - 1u);
@@ -77,6 +137,24 @@ void copy_bytes(void* dst, const void* src, size_t len) {
 
 void set_bytes(void* dst, int value, size_t len) {
     memset(dst, value, len);
+}
+
+void klog_text(const char* text) {
+    if (text && *text) {
+        (void)sceKernelDebugOutText(0, text);
+    }
+}
+
+void klog_hook_result(const char* symbol, const char* status, void* target, void* trampoline) {
+    char line[256];
+    snprintf(line,
+             sizeof(line),
+             "[backport-helper] hook symbol=%s status=%s target=%p trampoline=%p\n",
+             symbol ? symbol : "<null>",
+             status ? status : "<null>",
+             target,
+             trampoline);
+    klog_text(line);
 }
 
 void store_u64_le(void* dst, uint64_t value) {
@@ -106,6 +184,20 @@ void write_abs_jump(void* dst, void* target) {
     store_u64_le(p + 6, reinterpret_cast<uintptr_t>(target));
 }
 
+bool write_rel_jump(void* dst, void* target) {
+    const auto from = reinterpret_cast<uintptr_t>(dst);
+    const auto to = reinterpret_cast<uintptr_t>(target);
+    const int64_t disp64 = static_cast<int64_t>(to) - static_cast<int64_t>(from + 5);
+    if (disp64 < INT32_MIN || disp64 > INT32_MAX) {
+        return false;
+    }
+
+    auto* p = static_cast<uint8_t*>(dst);
+    p[0] = 0xe9;
+    store_i32_le(p + 1, static_cast<int32_t>(disp64));
+    return true;
+}
+
 bool make_code_writable(void* addr, size_t len) {
     const uintptr_t begin = page_floor(reinterpret_cast<uintptr_t>(addr));
     const uintptr_t end = page_ceil(reinterpret_cast<uintptr_t>(addr) + len);
@@ -119,30 +211,42 @@ void restore_code_protection(void* addr, size_t len) {
 }
 
 bool protect_trampoline_page(void* page, int prot) {
+    for (size_t pageIndex = 0; pageIndex < kMaxTrampolinePages; ++pageIndex) {
+        if (page != g_trampolineStorage[pageIndex]) {
+            continue;
+        }
+        if (g_trampolinePageProt[pageIndex] == prot) {
+            return true;
+        }
+        if (sceKernelMprotect(page, kTrampolinePageSize, prot) != 0) {
+            return false;
+        }
+        g_trampolinePageProt[pageIndex] = prot;
+        return true;
+    }
     return sceKernelMprotect(page, kTrampolinePageSize, prot) == 0;
+}
+
+void* trampoline_page(size_t pageIndex) {
+    return g_trampolineStorage[pageIndex];
 }
 
 void* allocate_trampoline() {
     for (size_t pageIndex = 0; pageIndex < kMaxTrampolinePages; ++pageIndex) {
-        if (!g_trampolinePages[pageIndex]) {
-            void* mem = nullptr;
-            if (sceKernelMapFlexibleMemory(&mem, kTrampolinePageSize, kRwProt, 0) != 0) {
-                return nullptr;
-            }
-            g_trampolinePages[pageIndex] = mem;
-            g_trampolinePageUsed[pageIndex] = 0;
-        }
+        void* page = trampoline_page(pageIndex);
         const uint32_t used = g_trampolinePageUsed[pageIndex];
         for (size_t slot = 0; slot < kTrampolineSlotsPerPage; ++slot) {
             const uint32_t bit = 1u << slot;
             if ((used & bit) != 0) {
                 continue;
             }
-            if (!protect_trampoline_page(g_trampolinePages[pageIndex], kRwProt)) {
+            if (!protect_trampoline_page(page, kRwProt)) {
                 return nullptr;
             }
             g_trampolinePageUsed[pageIndex] = used | bit;
-            return static_cast<uint8_t*>(g_trampolinePages[pageIndex]) + slot * kTrampolineSize;
+            void* trampoline = static_cast<uint8_t*>(page) + slot * kTrampolineSize;
+            set_bytes(trampoline, 0, kTrampolineSize);
+            return trampoline;
         }
     }
     return nullptr;
@@ -151,9 +255,9 @@ void* allocate_trampoline() {
 bool make_trampoline_executable(void* trampoline) {
     const uintptr_t slot = reinterpret_cast<uintptr_t>(trampoline);
     for (size_t pageIndex = 0; pageIndex < kMaxTrampolinePages; ++pageIndex) {
-        void* page = g_trampolinePages[pageIndex];
+        void* page = trampoline_page(pageIndex);
         const uintptr_t begin = reinterpret_cast<uintptr_t>(page);
-        if (page && slot >= begin && slot < begin + kTrampolinePageSize) {
+        if (slot >= begin && slot < begin + kTrampolinePageSize) {
             return protect_trampoline_page(page, kCodeProt);
         }
     }
@@ -166,19 +270,14 @@ void release_trampoline(void* trampoline) {
     }
     const uintptr_t slot = reinterpret_cast<uintptr_t>(trampoline);
     for (size_t pageIndex = 0; pageIndex < kMaxTrampolinePages; ++pageIndex) {
-        void* page = g_trampolinePages[pageIndex];
+        void* page = trampoline_page(pageIndex);
         const uintptr_t begin = reinterpret_cast<uintptr_t>(page);
-        if (!page || slot < begin || slot >= begin + kTrampolinePageSize) {
+        if (slot < begin || slot >= begin + kTrampolinePageSize) {
             continue;
         }
         const size_t slotIndex = (slot - begin) / kTrampolineSize;
         g_trampolinePageUsed[pageIndex] &= ~(1u << slotIndex);
-        if (g_trampolinePageUsed[pageIndex] == 0) {
-            (void)sceKernelMunmap(page, kTrampolinePageSize);
-            g_trampolinePages[pageIndex] = nullptr;
-        } else {
-            (void)protect_trampoline_page(page, kCodeProt);
-        }
+        (void)protect_trampoline_page(page, kCodeProt);
         return;
     }
 }
@@ -370,6 +469,51 @@ bool uninstall_inline_detour(InlineDetour& detour) {
     return true;
 }
 
+bool install_tiny_detour(TinyDetour& detour, void* target, void* replacement) {
+    constexpr size_t kTinyPatchSize = sizeof(detour.original);
+    if (detour.installed) {
+        return true;
+    }
+    if (!target || !replacement || target == replacement) {
+        return false;
+    }
+    if (!make_code_writable(target, kTinyPatchSize)) {
+        return false;
+    }
+
+    auto* src = static_cast<uint8_t*>(target);
+    copy_bytes(detour.original, src, kTinyPatchSize);
+    if (!write_rel_jump(src, replacement)) {
+        restore_code_protection(target, kTinyPatchSize);
+        return false;
+    }
+    if (kTinyPatchSize > 5) {
+        set_bytes(src + 5, 0x90, kTinyPatchSize - 5);
+    }
+    __builtin___clear_cache(reinterpret_cast<char*>(src), reinterpret_cast<char*>(src + kTinyPatchSize));
+    restore_code_protection(target, kTinyPatchSize);
+
+    detour.target = target;
+    detour.replacement = replacement;
+    detour.installed = true;
+    return true;
+}
+
+bool uninstall_tiny_detour(TinyDetour& detour) {
+    constexpr size_t kTinyPatchSize = sizeof(detour.original);
+    if (!detour.installed) {
+        return true;
+    }
+    if (!make_code_writable(detour.target, kTinyPatchSize)) {
+        return false;
+    }
+    copy_bytes(detour.target, detour.original, kTinyPatchSize);
+    __builtin___clear_cache(static_cast<char*>(detour.target), static_cast<char*>(detour.target) + kTinyPatchSize);
+    restore_code_protection(detour.target, kTinyPatchSize);
+    detour = {};
+    return true;
+}
+
 InstalledHook* find_hook(const char* symbol) {
     if (!symbol) {
         return nullptr;
@@ -383,12 +527,12 @@ InstalledHook* find_hook(const char* symbol) {
     return nullptr;
 }
 
-LateDlsymHook* find_late_dlsym_hook(const char* symbol) {
+LateFunctionHook* find_late_hook(const char* symbol) {
     if (!symbol) {
         return nullptr;
     }
-    for (size_t i = 0; i < g_lateDlsymHookCount; ++i) {
-        LateDlsymHook& hook = g_lateDlsymHooks[i];
+    for (size_t i = 0; i < g_lateHookCount; ++i) {
+        LateFunctionHook& hook = g_lateHooks[i];
         if (strcmp(hook.symbol, symbol) == 0) {
             return &hook;
         }
@@ -396,92 +540,242 @@ LateDlsymHook* find_late_dlsym_hook(const char* symbol) {
     return nullptr;
 }
 
-void* resolve_libkernel_symbol(const char* symbol) {
-    void* addr = nullptr;
-    if (!symbol || sceKernelDlsym(kLibkernelHandle, symbol, &addr) != 0) {
+void* resolve_load_start_module_body(void* entry) {
+    if (!entry) {
         return nullptr;
     }
-    return addr;
+    return static_cast<uint8_t*>(entry) + kLoadStartModuleBodyOffset;
+}
+
+void* resolve_hook_target(const InstalledHook& hook, void* target) {
+    if (target && strcmp(hook.symbol, kLoadStartModuleSymbol) == 0) {
+        void* body = resolve_load_start_module_body(target);
+        if (body) {
+            g_loadStartModuleBody = body;
+            return body;
+        }
+        return nullptr;
+    }
+    return target;
+}
+
+bool append_hook_spec(const char* symbol, void* target, void* replacement, bool optional) {
+    if (!symbol || !target || !replacement || g_hookCount >= kMaxHookSpecs) {
+        return false;
+    }
+    g_hooks[g_hookCount++] = InstalledHook{
+        symbol,
+        target,
+        replacement,
+        optional,
+        {},
+    };
+    return true;
 }
 
 void load_hook_specs(void) {
     if (g_hookCount != 0) {
         return;
     }
+
+    (void)append_hook_spec(kLoadStartModuleSymbol,
+                           reinterpret_cast<void*>(&sceKernelLoadStartModule),
+                           reinterpret_cast<void*>(&sceKernelLoadStartModule_hook),
+                           true);
+
     size_t count = 0;
     const HookSpec* specs = getBackportHookSpecs(&count);
     if (!specs) {
         return;
     }
-    if (count > kMaxHookSpecs) {
-        count = kMaxHookSpecs;
+    const size_t room = kMaxHookSpecs - g_hookCount;
+    if (count > room) {
+        count = room;
     }
     for (size_t i = 0; i < count; ++i) {
-        if (!specs[i].symbol || !specs[i].replacement) {
+        if (!specs[i].symbol || !specs[i].target || !specs[i].replacement) {
             continue;
         }
-        g_hooks[g_hookCount++] = InstalledHook{
-            specs[i].symbol,
-            specs[i].replacement,
-            specs[i].optional != 0,
-            {},
-        };
+        (void)append_hook_spec(specs[i].symbol,
+                               specs[i].target,
+                               specs[i].replacement,
+                               specs[i].optional != 0);
     }
 }
 
-void load_late_dlsym_hook_specs(void) {
-    if (g_lateDlsymHookCount != 0) {
+void load_late_hook_specs(void) {
+    if (g_lateHookCount != 0) {
         return;
     }
+
     size_t count = 0;
     const LateDlsymHookSpec* specs = getLateDlsymHookSpecs(&count);
     if (!specs) {
         return;
     }
-    if (count > kMaxLateDlsymHookSpecs) {
-        count = kMaxLateDlsymHookSpecs;
+    if (count > kMaxLateHookSpecs) {
+        count = kMaxLateHookSpecs;
     }
     for (size_t i = 0; i < count; ++i) {
         if (!specs[i].symbol || !specs[i].replacement) {
             continue;
         }
-        g_lateDlsymHooks[g_lateDlsymHookCount++] = LateDlsymHook{
+        g_lateHooks[g_lateHookCount++] = LateFunctionHook{
             specs[i].moduleName,
             specs[i].symbol,
             specs[i].replacement,
-            nullptr,
+            {},
         };
     }
 }
 
-int sceKernelDlsym_hook(SceKernelModule handle, const char* symbol, void** addrp) {
-    auto* original = reinterpret_cast<SceKernelDlsymFn>(g_dlsymDetour.trampoline);
-    if (!original) {
-        return SCE_RTC_ERROR_NOT_SUPPORTED;
+bool module_name_matches(const char* moduleFileName, const char* expectedName) {
+    if (!expectedName || !*expectedName) {
+        return true;
     }
-
-    const int rc = original(handle, symbol, addrp);
-    if (rc == 0 && addrp && *addrp) {
-        LateDlsymHook* hook = find_late_dlsym_hook(symbol);
-        if (hook) {
-            if (!hook->original) {
-                hook->original = *addrp;
-            }
-            *addrp = hook->replacement;
-        }
+    if (!moduleFileName || !*moduleFileName) {
+        return true;
     }
-    return rc;
+    return strstr(moduleFileName, expectedName) != nullptr;
 }
 
-void install_late_dlsym_dispatcher(void) {
-    if (g_lateDlsymHookCount == 0 || g_dlsymDetour.installed) {
+void install_late_hooks_for_module(SceKernelModule moduleHandle, const char* moduleFileName) {
+    if (moduleHandle <= 0 || g_lateHookInstallDepth != 0) {
         return;
     }
-    void* target = nullptr;
-    if (sceKernelDlsym(kLibkernelHandle, "sceKernelDlsym", &target) != 0 || !target) {
+
+    ++g_lateHookInstallDepth;
+    for (size_t i = 0; i < g_lateHookCount; ++i) {
+        LateFunctionHook& hook = g_lateHooks[i];
+        if (hook.detour.installed || !module_name_matches(moduleFileName, hook.moduleName)) {
+            continue;
+        }
+
+        void* target = nullptr;
+        const int rc = sceKernelDlsym(moduleHandle, hook.symbol, &target);
+        char line[256];
+        snprintf(line,
+                 sizeof(line),
+                 "[backport-helper] late.resolve module=%s handle=0x%x symbol=%s rc=0x%x target=%p\n",
+                 moduleFileName ? moduleFileName : "<null>",
+                 static_cast<unsigned int>(moduleHandle),
+                 hook.symbol ? hook.symbol : "<null>",
+                 static_cast<unsigned int>(rc),
+                 target);
+        klog_text(line);
+
+        if (rc != 0 || !target) {
+            continue;
+        }
+        if (install_inline_detour(hook.detour, target, hook.replacement)) {
+            klog_hook_result(hook.symbol, "installed", hook.detour.target, hook.detour.trampoline);
+        } else {
+            klog_hook_result(hook.symbol, "failed", target, nullptr);
+        }
+    }
+    --g_lateHookInstallDepth;
+}
+
+void install_late_hooks_for_loaded_modules(void) {
+    if (g_lateHookCount == 0) {
         return;
     }
-    (void)install_inline_detour(g_dlsymDetour, target, reinterpret_cast<void*>(&sceKernelDlsym_hook));
+
+    size_t actualNum = 0;
+    int rc = sceKernelGetModuleList(g_loadedModuleScan, kMaxLoadedModuleScan, &actualNum);
+    char line[192];
+    snprintf(line,
+             sizeof(line),
+             "[backport-helper] late.scan list=sceKernelGetModuleList rc=0x%x actual=%llu capacity=%llu\n",
+             static_cast<unsigned int>(rc),
+             static_cast<unsigned long long>(actualNum),
+             static_cast<unsigned long long>(kMaxLoadedModuleScan));
+    klog_text(line);
+    if (rc != 0) {
+        return;
+    }
+
+    if (actualNum > kMaxLoadedModuleScan) {
+        actualNum = kMaxLoadedModuleScan;
+    }
+    for (size_t i = 0; i < actualNum; ++i) {
+        set_bytes(&g_loadedModuleInfo, 0, sizeof(g_loadedModuleInfo));
+        g_loadedModuleInfo.size = sizeof(g_loadedModuleInfo);
+        rc = sceKernelGetModuleInfo(g_loadedModuleScan[i], &g_loadedModuleInfo);
+        if (rc != 0) {
+            continue;
+        }
+        g_loadedModuleInfo.name[sizeof(g_loadedModuleInfo.name) - 1] = '\0';
+        install_late_hooks_for_module(g_loadedModuleScan[i], g_loadedModuleInfo.name);
+    }
+}
+
+SceKernelModule call_load_start_module_original(void* original,
+                                              const char* moduleFileName,
+                                              size_t args,
+                                              const void* argp,
+                                              uint32_t flags,
+                                              const SceKernelLoadModuleOpt* pOpt,
+                                              int* pRes) {
+    if (!original) {
+        return static_cast<SceKernelModule>(SCE_KERNEL_ERROR_ENOSYS);
+    }
+
+    if (g_loadStartHookDepth != 0) {
+        return reinterpret_cast<SceKernelLoadStartModuleFn>(original)(moduleFileName, args, argp, flags, pOpt, pRes);
+    }
+
+    ++g_loadStartHookDepth;
+    const SceKernelModule moduleHandle =
+        reinterpret_cast<SceKernelLoadStartModuleFn>(original)(moduleFileName, args, argp, flags, pOpt, pRes);
+    ErrnoGuard errnoGuard;
+
+    char line[256];
+    snprintf(line,
+             sizeof(line),
+             "[backport-helper] load_start result module=%s handle=0x%x pRes=0x%x\n",
+             moduleFileName ? moduleFileName : "<null>",
+             static_cast<unsigned int>(moduleHandle),
+             pRes ? static_cast<unsigned int>(*pRes) : 0u);
+    klog_text(line);
+
+    if (moduleHandle > 0) {
+        install_late_hooks_for_module(moduleHandle, moduleFileName);
+    }
+    --g_loadStartHookDepth;
+    return moduleHandle;
+}
+
+SceKernelModule sceKernelLoadStartModule_hook(const char* moduleFileName,
+                                              size_t args,
+                                              const void* argp,
+                                              uint32_t flags,
+                                              const SceKernelLoadModuleOpt* pOpt,
+                                              int* pRes) {
+    InstalledHook* hook = find_hook(kLoadStartModuleSymbol);
+    void* original = hook && hook->detour.installed ? hook->detour.trampoline : nullptr;
+    return call_load_start_module_original(original,
+                                           moduleFileName,
+                                           args,
+                                           argp,
+                                           flags,
+                                           pOpt,
+                                           pRes);
+}
+
+SceKernelModule sceKernelLoadStartModuleForSysmodule_hook(const char* moduleFileName,
+                                                          size_t args,
+                                                          const void* argp,
+                                                          uint32_t flags,
+                                                          const SceKernelLoadModuleOpt* pOpt,
+                                                          int* pRes) {
+    return call_load_start_module_original(g_loadStartModuleBody,
+                                           moduleFileName,
+                                           args,
+                                           argp,
+                                           flags | 0x10000u,
+                                           pOpt,
+                                           pRes);
 }
 
 } // namespace
@@ -492,36 +786,66 @@ extern "C" int hooksInstall(void) {
     }
 
     load_hook_specs();
-    load_late_dlsym_hook_specs();
+    load_late_hook_specs();
+
+    g_loadStartModuleBody = resolve_load_start_module_body(reinterpret_cast<void*>(&sceKernelLoadStartModule));
 
     int failedRequired = 0;
     for (size_t i = 0; i < g_hookCount; ++i) {
         InstalledHook& hook = g_hooks[i];
-        void* target = resolve_libkernel_symbol(hook.symbol);
+        void* rawTarget = hook.target;
+        void* target = resolve_hook_target(hook, rawTarget);
         if (!target) {
+            klog_hook_result(hook.symbol, rawTarget ? "failed" : "missing", rawTarget, nullptr);
             if (!hook.optional) {
                 ++failedRequired;
             }
             continue;
         }
-        if (!install_inline_detour(hook.detour, target, hook.replacement) && !hook.optional) {
-            ++failedRequired;
+        if (install_inline_detour(hook.detour, target, hook.replacement)) {
+            klog_hook_result(hook.symbol, "installed", hook.detour.target, hook.detour.trampoline);
+        } else {
+            klog_hook_result(hook.symbol, "failed", target, nullptr);
+            if (!hook.optional) {
+                ++failedRequired;
+            }
         }
     }
+
+    void* sysmoduleTarget = reinterpret_cast<void*>(&sceKernelLoadStartModuleForSysmodule);
+    InstalledHook* loadStartHook = find_hook(kLoadStartModuleSymbol);
+    if (sysmoduleTarget &&
+        !(loadStartHook && loadStartHook->detour.installed && loadStartHook->detour.target == g_loadStartModuleBody) &&
+        g_loadStartModuleBody) {
+        if (install_tiny_detour(g_loadStartModuleForSysmoduleDetour,
+                                sysmoduleTarget,
+                                reinterpret_cast<void*>(&sceKernelLoadStartModuleForSysmodule_hook))) {
+            klog_hook_result("sceKernelLoadStartModuleForSysmodule", "installed", sysmoduleTarget, nullptr);
+        } else {
+            klog_hook_result("sceKernelLoadStartModuleForSysmodule", "failed", sysmoduleTarget, nullptr);
+        }
+    }
+
     if (failedRequired != 0) {
         (void)hooksUninstall();
         return SCE_RTC_ERROR_NOT_SUPPORTED;
     }
 
-    install_late_dlsym_dispatcher();
+    install_late_hooks_for_loaded_modules();
+
     g_hooksInstalled = 1;
     return SCE_OK;
 }
 
 extern "C" int hooksUninstall(void) {
     int failed = 0;
-    if (!uninstall_inline_detour(g_dlsymDetour)) {
+    if (!uninstall_tiny_detour(g_loadStartModuleForSysmoduleDetour)) {
         ++failed;
+    }
+    for (size_t i = g_lateHookCount; i > 0; --i) {
+        if (!uninstall_inline_detour(g_lateHooks[i - 1].detour)) {
+            ++failed;
+        }
     }
     for (size_t i = g_hookCount; i > 0; --i) {
         if (!uninstall_inline_detour(g_hooks[i - 1].detour)) {
@@ -547,6 +871,9 @@ extern "C" void* hookGetOriginalFunction(const char* symbol) {
 }
 
 extern "C" void* hookGetOriginalLateDlsymFunction(const char* symbol) {
-    LateDlsymHook* hook = find_late_dlsym_hook(symbol);
-    return hook ? hook->original : nullptr;
+    LateFunctionHook* hook = find_late_hook(symbol);
+    if (!hook) {
+        return nullptr;
+    }
+    return hook->detour.installed ? hook->detour.trampoline : hook->detour.target;
 }

@@ -5,6 +5,7 @@
 
 typedef struct HookSpec {
     const char* symbol;
+    void* target;
     void* replacement;
     int optional;
 } HookSpec;

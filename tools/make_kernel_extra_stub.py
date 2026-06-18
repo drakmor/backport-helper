@@ -37,8 +37,13 @@ STUB = {
         "sceKernelClockGettime",
         "sceKernelConvertLocaltimeToUtc",
         "sceKernelConvertUtcToLocaltime",
+        "sceKernelDebugOutText",
         "sceKernelError",
+        "sceKernelGetModuleInfo",
+        "sceKernelGetModuleList",
         "sceKernelGettimezone",
+        "sceKernelLoadStartModule",
+        "sceKernelLoadStartModuleForSysmodule",
         "sceKernelSettimeofday",
     ],
 }

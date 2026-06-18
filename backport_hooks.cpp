@@ -10,6 +10,8 @@ namespace {
 using SceKernelGettimezoneFn = int (*)(void*);
 using SceSaveDataMount3Fn = int32_t (*)(const SceSaveDataMount3*, SceSaveDataMountResult*);
 
+extern "C" int sceKernelGettimezone(void* tz);
+
 int sceKernelGettimezone_hook(void* tz) {
     auto* original = reinterpret_cast<SceKernelGettimezoneFn>(hookGetOriginalFunction("sceKernelGettimezone"));
     if (original) {
@@ -39,14 +41,16 @@ const HookSpec g_backportHooks[] = {
      * Example hook. If sceKernelGettimezone fails on a target runtime, fall
      * back to UTC instead of propagating the kernel error.
      */
-    {"sceKernelGettimezone", reinterpret_cast<void*>(&sceKernelGettimezone_hook), 1},
+    {"sceKernelGettimezone",
+     reinterpret_cast<void*>(&sceKernelGettimezone),
+     reinterpret_cast<void*>(&sceKernelGettimezone_hook),
+     1},
 };
 
 const LateDlsymHookSpec g_lateDlsymHooks[] = {
     /*
-     * Example for a module loaded after libSceRtc. When later code resolves
-     * sceSaveDataMount3 with sceKernelDlsym, return this replacement and keep
-     * the resolved original for forwarding from sceSaveDataMount3_hook.
+     * Example for a module loaded after libSceRtc. The loader hooks resolve
+     * sceSaveDataMount3 in the loaded module and install an inline detour.
      */
     {"libSceSaveData", "sceSaveDataMount3", reinterpret_cast<void*>(&sceSaveDataMount3_hook)},
 };
