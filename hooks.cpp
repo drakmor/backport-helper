@@ -103,8 +103,9 @@ SceKernelModule sceKernelLoadStartModuleForSysmodule_hook(const char* moduleFile
                                                           int* pRes);
 
 constexpr size_t kMaxHookSpecs = 32;
-constexpr size_t kMaxLateHookSpecs = 32;
-constexpr size_t kMaxInlineDetours = kMaxHookSpecs + kMaxLateHookSpecs;
+constexpr size_t kMaxLateHookSpecs = 256;
+constexpr size_t kMaxRawHookSpecs = 8;
+constexpr size_t kMaxInlineDetours = kMaxHookSpecs + kMaxLateHookSpecs + kMaxRawHookSpecs;
 constexpr size_t kMaxTrampolinePages = (kMaxInlineDetours + kTrampolineSlotsPerPage - 1u) / kTrampolineSlotsPerPage;
 constexpr size_t kMaxLoadedModuleScan = 0x400;
 
@@ -112,6 +113,8 @@ InstalledHook g_hooks[kMaxHookSpecs] = {};
 size_t g_hookCount = 0;
 LateFunctionHook g_lateHooks[kMaxLateHookSpecs] = {};
 size_t g_lateHookCount = 0;
+InlineDetour g_rawHooks[kMaxRawHookSpecs] = {};
+size_t g_rawHookCount = 0;
 SceKernelModule g_loadedModuleScan[kMaxLoadedModuleScan] = {};
 KernelModuleInfoCompat g_loadedModuleInfo = {};
 alignas(SCE_KERNEL_PAGE_SIZE) uint8_t g_trampolineStorage[kMaxTrampolinePages][kTrampolinePageSize] = {};
@@ -882,6 +885,14 @@ extern "C" int hooksUninstall(void) {
     if (!uninstall_tiny_detour(g_loadStartModuleForSysmoduleDetour)) {
         ++failed;
     }
+    for (size_t i = g_rawHookCount; i > 0; --i) {
+        if (!uninstall_inline_detour(g_rawHooks[i - 1])) {
+            ++failed;
+        }
+    }
+    if (failed == 0) {
+        g_rawHookCount = 0;
+    }
     for (size_t i = g_lateHookCount; i > 0; --i) {
         if (!uninstall_inline_detour(g_lateHooks[i - 1].detour)) {
             ++failed;
@@ -916,4 +927,45 @@ extern "C" void* hookGetOriginalLateDlsymFunction(const char* symbol) {
         return nullptr;
     }
     return hook->detour.installed ? hook->detour.trampoline : hook->detour.target;
+}
+
+extern "C" int hookInstallAbsolute(void* target, void* replacement, void** originalOut) {
+    if (originalOut) {
+        *originalOut = nullptr;
+    }
+    if (!target || !replacement) {
+        klog_hook_result("<absolute>", "invalid", target, nullptr);
+        return SCE_RTC_ERROR_NOT_SUPPORTED;
+    }
+
+    for (size_t i = 0; i < g_rawHookCount; ++i) {
+        InlineDetour& hook = g_rawHooks[i];
+        if (hook.target != target) {
+            continue;
+        }
+        if (originalOut) {
+            *originalOut = hook.trampoline;
+        }
+        klog_hook_result("<absolute>", hook.installed ? "existing" : "failed", target, hook.trampoline);
+        return hook.installed ? SCE_OK : SCE_RTC_ERROR_NOT_SUPPORTED;
+    }
+
+    if (g_rawHookCount >= kMaxRawHookSpecs) {
+        klog_hook_result("<absolute>", "full", target, nullptr);
+        return SCE_RTC_ERROR_NOT_SUPPORTED;
+    }
+
+    InlineDetour& hook = g_rawHooks[g_rawHookCount];
+    if (!install_inline_detour(hook, target, replacement)) {
+        klog_hook_result("<absolute>", "failed", target, nullptr);
+        hook = {};
+        return SCE_RTC_ERROR_NOT_SUPPORTED;
+    }
+
+    ++g_rawHookCount;
+    if (originalOut) {
+        *originalOut = hook.trampoline;
+    }
+    klog_hook_result("<absolute>", "installed", hook.target, hook.trampoline);
+    return SCE_OK;
 }

@@ -11,6 +11,7 @@ using SceKernelGettimezoneFn = int (*)(void*);
 using SceSaveDataMount3Fn = int32_t (*)(const SceSaveDataMount3*, SceSaveDataMountResult*);
 
 extern "C" int sceKernelGettimezone(void* tz);
+extern "C" const LateDlsymHookSpec* getOnlineLateDlsymHookSpecs(size_t* count);
 
 int sceKernelGettimezone_hook(void* tz) {
     auto* original = reinterpret_cast<SceKernelGettimezoneFn>(hookGetOriginalFunction("sceKernelGettimezone"));
@@ -56,6 +57,19 @@ const LateDlsymHookSpec g_lateDlsymHooks[] = {
     {nullptr, "sceSaveDataMount3", reinterpret_cast<void*>(&sceSaveDataMount3_hook)},
 };
 
+constexpr size_t kMaxCombinedLateDlsymHooks = 256;
+LateDlsymHookSpec g_combinedLateDlsymHooks[kMaxCombinedLateDlsymHooks] = {};
+size_t g_combinedLateDlsymHookCount = 0;
+
+void append_late_specs(const LateDlsymHookSpec* specs, size_t count) {
+    if (!specs) {
+        return;
+    }
+    for (size_t i = 0; i < count && g_combinedLateDlsymHookCount < kMaxCombinedLateDlsymHooks; ++i) {
+        g_combinedLateDlsymHooks[g_combinedLateDlsymHookCount++] = specs[i];
+    }
+}
+
 } // namespace
 
 extern "C" const HookSpec* getBackportHookSpecs(size_t* count) {
@@ -66,8 +80,15 @@ extern "C" const HookSpec* getBackportHookSpecs(size_t* count) {
 }
 
 extern "C" const LateDlsymHookSpec* getLateDlsymHookSpecs(size_t* count) {
-    if (count) {
-        *count = sizeof(g_lateDlsymHooks) / sizeof(g_lateDlsymHooks[0]);
+    if (g_combinedLateDlsymHookCount == 0) {
+        append_late_specs(g_lateDlsymHooks, sizeof(g_lateDlsymHooks) / sizeof(g_lateDlsymHooks[0]));
+
+        size_t onlineCount = 0;
+        const LateDlsymHookSpec* onlineSpecs = getOnlineLateDlsymHookSpecs(&onlineCount);
+        append_late_specs(onlineSpecs, onlineCount);
     }
-    return g_lateDlsymHooks;
+    if (count) {
+        *count = g_combinedLateDlsymHookCount;
+    }
+    return g_combinedLateDlsymHooks;
 }

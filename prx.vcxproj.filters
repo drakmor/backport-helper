@@ -26,6 +26,9 @@
     <ClCompile Include="hooks.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="online.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="rtc.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

@@ -26,6 +26,7 @@ int hooksUninstall(void);
 int hooksInstalled(void);
 void* hookGetOriginalFunction(const char* symbol);
 void* hookGetOriginalLateDlsymFunction(const char* symbol);
+int hookInstallAbsolute(void* target, void* replacement, void** originalOut);
 const HookSpec* getBackportHookSpecs(size_t* count);
 const LateDlsymHookSpec* getLateDlsymHookSpecs(size_t* count);
 
