@@ -11,6 +11,7 @@ typedef struct HookSpec {
 } HookSpec;
 
 typedef struct LateDlsymHookSpec {
+    /* nullptr or "" means: resolve the symbol in any loaded or future module. */
     const char* moduleName;
     const char* symbol;
     void* replacement;

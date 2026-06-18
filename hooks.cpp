@@ -540,6 +540,29 @@ LateFunctionHook* find_late_hook(const char* symbol) {
     return nullptr;
 }
 
+bool has_pending_late_hooks(void) {
+    for (size_t i = 0; i < g_lateHookCount; ++i) {
+        if (!g_lateHooks[i].detour.installed) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool has_module_filtered_pending_late_hooks(void) {
+    for (size_t i = 0; i < g_lateHookCount; ++i) {
+        const LateFunctionHook& hook = g_lateHooks[i];
+        if (!hook.detour.installed && hook.moduleName && *hook.moduleName) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const char* late_hook_module_label(const char* moduleName) {
+    return moduleName && *moduleName ? moduleName : "<any>";
+}
+
 void* resolve_load_start_module_body(void* entry) {
     if (!entry) {
         return nullptr;
@@ -634,39 +657,60 @@ bool module_name_matches(const char* moduleFileName, const char* expectedName) {
         return true;
     }
     if (!moduleFileName || !*moduleFileName) {
-        return true;
+        return false;
     }
     return strstr(moduleFileName, expectedName) != nullptr;
 }
 
+const char* get_module_info_name(SceKernelModule moduleHandle, const char* fallbackName) {
+    set_bytes(&g_loadedModuleInfo, 0, sizeof(g_loadedModuleInfo));
+    g_loadedModuleInfo.size = sizeof(g_loadedModuleInfo);
+    if (sceKernelGetModuleInfo(moduleHandle, &g_loadedModuleInfo) == 0) {
+        g_loadedModuleInfo.name[sizeof(g_loadedModuleInfo.name) - 1] = '\0';
+        if (g_loadedModuleInfo.name[0] != '\0') {
+            return g_loadedModuleInfo.name;
+        }
+    }
+    return fallbackName;
+}
+
 void install_late_hooks_for_module(SceKernelModule moduleHandle, const char* moduleFileName) {
-    if (moduleHandle <= 0 || g_lateHookInstallDepth != 0) {
+    if (moduleHandle <= 0 || g_lateHookInstallDepth != 0 || !has_pending_late_hooks()) {
         return;
     }
 
     ++g_lateHookInstallDepth;
+    const bool needModuleName = has_module_filtered_pending_late_hooks();
+    bool triedModuleInfo = needModuleName;
+    const char* moduleName = needModuleName ? get_module_info_name(moduleHandle, moduleFileName) : moduleFileName;
     for (size_t i = 0; i < g_lateHookCount; ++i) {
         LateFunctionHook& hook = g_lateHooks[i];
-        if (hook.detour.installed || !module_name_matches(moduleFileName, hook.moduleName)) {
+        if (hook.detour.installed || !module_name_matches(moduleName, hook.moduleName)) {
             continue;
         }
 
         void* target = nullptr;
         const int rc = sceKernelDlsym(moduleHandle, hook.symbol, &target);
-        char line[256];
-        snprintf(line,
-                 sizeof(line),
-                 "[backport-helper] late.resolve module=%s handle=0x%x symbol=%s rc=0x%x target=%p\n",
-                 moduleFileName ? moduleFileName : "<null>",
-                 static_cast<unsigned int>(moduleHandle),
-                 hook.symbol ? hook.symbol : "<null>",
-                 static_cast<unsigned int>(rc),
-                 target);
-        klog_text(line);
-
         if (rc != 0 || !target) {
             continue;
         }
+
+        if (!moduleName && !triedModuleInfo) {
+            moduleName = get_module_info_name(moduleHandle, nullptr);
+            triedModuleInfo = true;
+        }
+
+        char line[256];
+        snprintf(line,
+                 sizeof(line),
+                 "[backport-helper] late.resolve module=%s expected=%s handle=0x%x symbol=%s target=%p\n",
+                 moduleName ? moduleName : "<null>",
+                 late_hook_module_label(hook.moduleName),
+                 static_cast<unsigned int>(moduleHandle),
+                 hook.symbol ? hook.symbol : "<null>",
+                 target);
+        klog_text(line);
+
         if (install_inline_detour(hook.detour, target, hook.replacement)) {
             klog_hook_result(hook.symbol, "installed", hook.detour.target, hook.detour.trampoline);
         } else {
@@ -677,7 +721,7 @@ void install_late_hooks_for_module(SceKernelModule moduleHandle, const char* mod
 }
 
 void install_late_hooks_for_loaded_modules(void) {
-    if (g_lateHookCount == 0) {
+    if (!has_pending_late_hooks()) {
         return;
     }
 
@@ -699,14 +743,10 @@ void install_late_hooks_for_loaded_modules(void) {
         actualNum = kMaxLoadedModuleScan;
     }
     for (size_t i = 0; i < actualNum; ++i) {
-        set_bytes(&g_loadedModuleInfo, 0, sizeof(g_loadedModuleInfo));
-        g_loadedModuleInfo.size = sizeof(g_loadedModuleInfo);
-        rc = sceKernelGetModuleInfo(g_loadedModuleScan[i], &g_loadedModuleInfo);
-        if (rc != 0) {
-            continue;
+        if (!has_pending_late_hooks()) {
+            break;
         }
-        g_loadedModuleInfo.name[sizeof(g_loadedModuleInfo.name) - 1] = '\0';
-        install_late_hooks_for_module(g_loadedModuleScan[i], g_loadedModuleInfo.name);
+        install_late_hooks_for_module(g_loadedModuleScan[i], nullptr);
     }
 }
 

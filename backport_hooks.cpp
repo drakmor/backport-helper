@@ -49,10 +49,11 @@ const HookSpec g_backportHooks[] = {
 
 const LateDlsymHookSpec g_lateDlsymHooks[] = {
     /*
-     * Example for a module loaded after libSceRtc. The loader hooks resolve
-     * sceSaveDataMount3 in the loaded module and install an inline detour.
+     * Example for a module that may be loaded after libSceRtc. Use nullptr
+     * when the export name is known but the owning module is not: the runtime
+     * hook engine scans already loaded modules and each module loaded later.
      */
-    {"libSceSaveData", "sceSaveDataMount3", reinterpret_cast<void*>(&sceSaveDataMount3_hook)},
+    {nullptr, "sceSaveDataMount3", reinterpret_cast<void*>(&sceSaveDataMount3_hook)},
 };
 
 } // namespace

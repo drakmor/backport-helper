@@ -69,10 +69,19 @@ matching `*_hook` replacement. Use `hookGetOriginalFunction("symbol")` inside a
 hook when the replacement needs to forward to the original trampoline.
 
 For functions from modules loaded after this PRX, add entries to
-`g_lateDlsymHooks[]`. These hooks are applied when later code resolves the
-symbol with `sceKernelDlsym`; use `hookGetOriginalLateDlsymFunction("symbol")`
-to forward to the resolved original. This path covers dynamic symbol resolution,
-not static import relocations that were already bound by the loader.
+`g_lateDlsymHooks[]`. The hook engine scans modules that are already loaded and
+also checks each module loaded later through `sceKernelLoadStartModule` or
+`sceKernelLoadStartModuleForSysmodule`. Set `moduleName` to `nullptr` or `""`
+when the export name is known but the owning module is not:
+
+```c
+{nullptr, "sceSomeLateFunction", reinterpret_cast<void*>(&sceSomeLateFunction_hook)}
+```
+
+Use `hookGetOriginalLateDlsymFunction("symbol")` inside the replacement to
+forward to the resolved original. This path hooks exported function bodies by
+resolving them with `sceKernelDlsym`; it does not rewrite static import
+relocations that were already bound by the loader.
 
 ## License
 
