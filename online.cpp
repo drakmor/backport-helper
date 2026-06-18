@@ -77,18 +77,21 @@ constexpr double kFakeBandwidthBps = 1000000.0;
 constexpr size_t kMaxWebApiRequestStates = 64;
 constexpr size_t kMaxWebApiResponseBody = 2048;
 constexpr size_t kMaxAuthRequestStates = SCE_NP_AUTH_MAX_REQUEST_NUM;
-constexpr int32_t kAuthPollsBeforeFinish = 1;
+constexpr int32_t kAuthPollsBeforeFinish = 0;
 constexpr int kSessionSignalingPeerNatStatusInfoCode = 8;
 constexpr uintptr_t kGt7EbootBase = 0x400000;
 constexpr uintptr_t kGt7AdhocThrowRuntimeAddress = kGt7EbootBase + 0xDAB20;
 constexpr uintptr_t kGt7AdhocReporterRuntimeAddress = kGt7EbootBase + 0x1AC54A0;
 constexpr uintptr_t kGt7JwtParseRuntimeAddress = kGt7EbootBase + 0xF03DF0;
+constexpr uintptr_t kGt7NpAuthTokenWrapperRuntimeAddress = kGt7EbootBase + 0xD95C80;
 constexpr uint64_t kGt7AdhocStringHeapCapacity = 0x10;
 
 typedef float Gt7AdhocVector __attribute__((vector_size(16)));
 using Gt7AdhocThrowFn = int64_t (*)(const char*, const char*, unsigned int, void*, Gt7AdhocVector);
 using Gt7AdhocReporterFn = int64_t (*)(const char*, const char*, const char*, Gt7AdhocVector);
 using Gt7JwtParseFn = int64_t (*)(void*, const char*, Gt7AdhocVector);
+using Gt7NpAuthTokenWrapperFn =
+    int64_t (*)(void*, void*, const char*, const char*, int64_t, Gt7AdhocVector);
 
 std::atomic<int32_t> g_npRequestId{1};
 std::atomic<int32_t> g_authRequestId{1};
@@ -138,6 +141,7 @@ std::atomic<bool> g_gt7AdhocDiagnosticsInstallAttempted{false};
 Gt7AdhocThrowFn g_originalGt7AdhocThrow = nullptr;
 Gt7AdhocReporterFn g_originalGt7AdhocReporter = nullptr;
 Gt7JwtParseFn g_originalGt7JwtParse = nullptr;
+Gt7NpAuthTokenWrapperFn g_originalGt7NpAuthTokenWrapper = nullptr;
 
 struct SceNpAuthGetAuthorizedAppCodeParameter;
 struct SceNpCommereDialogParam2;
@@ -493,6 +497,43 @@ int64_t gt7_jwt_parse_hook(void* parsedObject, const char* token, Gt7AdhocVector
     return result;
 }
 
+int64_t gt7_np_auth_token_wrapper_hook(void* outString,
+                                       void* paramBlock,
+                                       const char* clientId,
+                                       const char* scope,
+                                       int64_t opaque,
+                                       Gt7AdhocVector xmm0) {
+    const int64_t result = g_originalGt7NpAuthTokenWrapper
+        ? g_originalGt7NpAuthTokenWrapper(outString, paramBlock, clientId, scope, opaque, xmm0)
+        : 0;
+
+    const char* token = gt7_adhoc_string_data(outString);
+    size_t tokenLength = 0;
+    int periodCount = 0;
+    if (token) {
+        tokenLength = strlen(token);
+        for (const char* cursor = token; *cursor; ++cursor) {
+            if (*cursor == '.') {
+                ++periodCount;
+            }
+        }
+    }
+
+    char clientBuf[48];
+    char scopeBuf[128];
+    copy_printable_cstr(clientBuf, sizeof(clientBuf), clientId);
+    copy_printable_cstr(scopeBuf, sizeof(scopeBuf), scope);
+    const bool clientMatches = clientId && strcmp(clientId, kNpAuthClientId) == 0;
+    online_klog("GT7 NpAuthTokenWrapper len=%zu periods=%d client=%s match=%d",
+                tokenLength,
+                periodCount,
+                clientBuf,
+                clientMatches ? 1 : 0);
+    online_klog("GT7 NpAuthTokenWrapper scope=%s", scopeBuf);
+    log_long_cstr("GT7 NpAuthTokenWrapper token", token);
+    return result;
+}
+
 void install_gt7_adhoc_diagnostics_once(void) {
     bool expected = false;
     if (!g_gt7AdhocDiagnosticsInstallAttempted.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
@@ -527,6 +568,17 @@ void install_gt7_adhoc_diagnostics_once(void) {
     online_klog("GT7 JWT diagnostics target=%p rc=0x%x original=%p",
                 reinterpret_cast<void*>(kGt7JwtParseRuntimeAddress),
                 static_cast<unsigned int>(jwtRc),
+                original);
+
+    original = nullptr;
+    const int tokenWrapperRc =
+        hookInstallAbsolute(reinterpret_cast<void*>(kGt7NpAuthTokenWrapperRuntimeAddress),
+                            reinterpret_cast<void*>(&gt7_np_auth_token_wrapper_hook),
+                            &original);
+    g_originalGt7NpAuthTokenWrapper = reinterpret_cast<Gt7NpAuthTokenWrapperFn>(original);
+    online_klog("GT7 NpAuthTokenWrapper diagnostics target=%p rc=0x%x original=%p",
+                reinterpret_cast<void*>(kGt7NpAuthTokenWrapperRuntimeAddress),
+                static_cast<unsigned int>(tokenWrapperRc),
                 original);
 }
 
@@ -1497,12 +1549,13 @@ int sceNpAuthGetIdTokenV3_hook(int reqId,
     memset(idToken, 0, sizeof(*idToken));
     copy_cstr(idToken->token, sizeof(idToken->token), kFakeIdToken);
     mark_auth_request_pending(reqId, AuthRequestKind::IdToken);
-    online_klog("sceNpAuthGetIdTokenV3 req=%d user=%d client=%s match=%d scope=%s -> fake_unsigned_id_token",
+    online_klog("sceNpAuthGetIdTokenV3 req=%d user=%d client=%s match=%d scope=%s -> fake_unsigned_id_token len=%zu",
                 reqId,
                 param->userId,
                 param->clientId ? param->clientId->id : "<null>",
                 param->clientId && streq(param->clientId->id, kNpAuthClientId) ? 1 : 0,
-                param->scope ? param->scope : "<null>");
+                param->scope ? param->scope : "<null>",
+                strlen(idToken->token));
     return SCE_OK;
 }
 
