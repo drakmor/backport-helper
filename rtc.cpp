@@ -6,7 +6,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 #include <time.h>
 
 static constexpr int64_t kTicksPerSecond = 1000000LL;
@@ -177,23 +176,33 @@ static int rtc_set_realtime_tick(const SceRtcTick* tick) {
 }
 
 struct KernelTimezone {
+    int32_t reserved0;
+    int32_t reserved1;
     int32_t standard_offset_seconds;
     int32_t daylight_offset_seconds;
 };
 
-static int rtc_current_timezone_offset(int* minutes) {
+static inline int64_t rtc_unix_seconds_from_tick(const SceRtcTick* tick) {
+    return (int64_t)((tick->tick - kUnixEpochTick) / (uint64_t)kTicksPerSecond);
+}
+
+static int rtc_timezone_offset_for_utc_seconds(int64_t utc_seconds, int* minutes) {
     unsigned char local_buf[8] = {};
     KernelTimezone tz = {};
-    int rc = sceKernelConvertUtcToLocaltime(0, local_buf, &tz, 0);
+    int rc = sceKernelConvertUtcToLocaltime(utc_seconds, local_buf, &tz, 0);
     if (rc < 0) return rc;
     *minutes = (tz.standard_offset_seconds + tz.daylight_offset_seconds) / 60;
     return SCE_OK;
 }
 
-static int rtc_current_local_to_utc_offset(int* minutes) {
+static int rtc_current_timezone_offset(int* minutes) {
+    return rtc_timezone_offset_for_utc_seconds(0, minutes);
+}
+
+static int rtc_local_to_utc_offset_for_local_seconds(int64_t local_seconds, int* minutes) {
     unsigned char utc_buf[8] = {};
     KernelTimezone tz = {};
-    int rc = sceKernelConvertLocaltimeToUtc(0, -1, utc_buf, &tz, 0);
+    int rc = sceKernelConvertLocaltimeToUtc(local_seconds, -1, utc_buf, &tz, 0);
     if (rc < 0) return rc;
     *minutes = -((tz.standard_offset_seconds + tz.daylight_offset_seconds) / 60);
     return SCE_OK;
@@ -283,17 +292,19 @@ static int rtc_parse_1_or_2_digits(const char*& p, int* out) {
 }
 
 static const char* rtc_parse_named_month(const char* p, int* month) {
-    static const char* names[12] = {
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December"
+    struct NameEntry { const char* name; unsigned char len; };
+    static const NameEntry names[12] = {
+        {"January", 7}, {"February", 8}, {"March", 5}, {"April", 5},
+        {"May", 3}, {"June", 4}, {"July", 4}, {"August", 6},
+        {"September", 9}, {"October", 7}, {"November", 8}, {"December", 8}
     };
     for (int i = 0; i < 12; ++i) {
-        int len = (int)strlen(names[i]);
-        if (rtc_ascii_ieq_n(p, names[i], len)) {
+        const int len = names[i].len;
+        if (rtc_ascii_ieq_n(p, names[i].name, len)) {
             *month = i + 1;
             return p + len;
         }
-        if (rtc_ascii_ieq_n(p, names[i], 3)) {
+        if (rtc_ascii_ieq_n(p, names[i].name, 3)) {
             *month = i + 1;
             return p + 3;
         }
@@ -302,14 +313,16 @@ static const char* rtc_parse_named_month(const char* p, int* month) {
 }
 
 static const char* rtc_skip_weekday_prefix(const char* p) {
-    static const char* names[7] = {
-        "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
+    struct NameEntry { const char* name; unsigned char len; };
+    static const NameEntry names[7] = {
+        {"Sunday", 6}, {"Monday", 6}, {"Tuesday", 7}, {"Wednesday", 9},
+        {"Thursday", 8}, {"Friday", 6}, {"Saturday", 8}
     };
     for (int i = 0; i < 7; ++i) {
-        int len = (int)strlen(names[i]);
+        const int len = names[i].len;
         const char* end = NULL;
-        if (rtc_ascii_ieq_n(p, names[i], len)) end = p + len;
-        else if (rtc_ascii_ieq_n(p, names[i], 3)) end = p + 3;
+        if (rtc_ascii_ieq_n(p, names[i].name, len)) end = p + len;
+        else if (rtc_ascii_ieq_n(p, names[i].name, 3)) end = p + 3;
         if (end != NULL) {
             if (*end == ',') ++end;
             rtc_skip_space(end);
@@ -346,25 +359,25 @@ static int rtc_parse_time_of_day(const char*& p, int* hour, int* minute, int* se
 }
 
 static int rtc_parse_zone_abbreviation(const char* p, int* out_minutes, const char** end) {
-    struct ZoneEntry { const char* name; int minutes; };
+    struct ZoneEntry { const char* name; unsigned char len; int minutes; };
     static const ZoneEntry zones[] = {
-        {"GMT", 0}, {"EST", -300}, {"EDT", -240}, {"CST", -360}, {"CDT", -300},
-        {"MST", -420}, {"MDT", -360}, {"PST", -480}, {"PDT", -420}, {"NZDT", 780},
-        {"NZST", 720}, {"IDLE", 720}, {"NZT", 720}, {"AESST", 660}, {"ACSST", 630},
-        {"CADT", 630}, {"SADT", 630}, {"AEST", 600}, {"EAST", 600}, {"GST", 600},
-        {"LIGT", 600}, {"ACST", 570}, {"SAST", 570}, {"CAST", 570}, {"AWSST", 540},
-        {"JST", 540}, {"KST", 540}, {"WDT", 540}, {"MT", 510}, {"AWST", 480},
-        {"CCT", 480}, {"WADT", 480}, {"WST", 480}, {"JT", 450}, {"WAST", 420},
-        {"IT", 210}, {"BT", 180}, {"EETDST", 180}, {"EET", 120}, {"CETDST", 120},
-        {"FWT", 120}, {"IST", 120}, {"MEST", 120}, {"METDST", 120}, {"SST", 120},
-        {"BST", 60}, {"CET", 60}, {"DNT", 60}, {"FST", 60}, {"MET", 60},
-        {"MEWT", 60}, {"MEZ", 60}, {"NOR", 60}, {"SET", 60}, {"SWT", 60},
-        {"WETDST", 60}, {"WET", 0}, {"WAT", -60}, {"NDT", -90}, {"ADT", -180},
-        {"NFT", -150}, {"NST", -150}, {"AST", -240}, {"YDT", -480}, {"HDT", -540},
-        {"YST", -540}, {"AHST", -600}, {"CAT", -600}, {"NT", -660}, {"IDLW", -720},
+        {"GMT", 3, 0}, {"EST", 3, -300}, {"EDT", 3, -240}, {"CST", 3, -360}, {"CDT", 3, -300},
+        {"MST", 3, -420}, {"MDT", 3, -360}, {"PST", 3, -480}, {"PDT", 3, -420}, {"NZDT", 4, 780},
+        {"NZST", 4, 720}, {"IDLE", 4, 720}, {"NZT", 3, 720}, {"AESST", 5, 660}, {"ACSST", 5, 630},
+        {"CADT", 4, 630}, {"SADT", 4, 630}, {"AEST", 4, 600}, {"EAST", 4, 600}, {"GST", 3, 600},
+        {"LIGT", 4, 600}, {"ACST", 4, 570}, {"SAST", 4, 570}, {"CAST", 4, 570}, {"AWSST", 5, 540},
+        {"JST", 3, 540}, {"KST", 3, 540}, {"WDT", 3, 540}, {"MT", 2, 510}, {"AWST", 4, 480},
+        {"CCT", 3, 480}, {"WADT", 4, 480}, {"WST", 3, 480}, {"JT", 2, 450}, {"WAST", 4, 420},
+        {"IT", 2, 210}, {"BT", 2, 180}, {"EETDST", 6, 180}, {"EET", 3, 120}, {"CETDST", 6, 120},
+        {"FWT", 3, 120}, {"IST", 3, 120}, {"MEST", 4, 120}, {"METDST", 6, 120}, {"SST", 3, 120},
+        {"BST", 3, 60}, {"CET", 3, 60}, {"DNT", 3, 60}, {"FST", 3, 60}, {"MET", 3, 60},
+        {"MEWT", 4, 60}, {"MEZ", 3, 60}, {"NOR", 3, 60}, {"SET", 3, 60}, {"SWT", 3, 60},
+        {"WETDST", 6, 60}, {"WET", 3, 0}, {"WAT", 3, -60}, {"NDT", 3, -90}, {"ADT", 3, -180},
+        {"NFT", 3, -150}, {"NST", 3, -150}, {"AST", 3, -240}, {"YDT", 3, -480}, {"HDT", 3, -540},
+        {"YST", 3, -540}, {"AHST", 4, -600}, {"CAT", 3, -600}, {"NT", 2, -660}, {"IDLW", 4, -720},
     };
     for (size_t i = 0; i < sizeof(zones) / sizeof(zones[0]); ++i) {
-        int len = (int)strlen(zones[i].name);
+        const int len = zones[i].len;
         if (rtc_ascii_ieq_n(p, zones[i].name, len)) {
             *out_minutes = zones[i].minutes;
             *end = p + len;
@@ -443,10 +456,7 @@ PRX_INTERFACE int sceRtcEnd(void) {
 
 PRX_INTERFACE int sceRtcSetConf(int64_t a1, int64_t a2, int64_t a3, int64_t a4, int64_t a5, int64_t a6) {
     (void)a1; (void)a2;
-    int tz[2];
-    tz[0] = (int)a3;
-    tz[1] = (int)a4;
-    return sceKernelSettimeofday(NULL, tz, a3, a4, a5, a6);
+    return sceKernelSettimeofday(reinterpret_cast<const void*>(a3), reinterpret_cast<const void*>(a4), a3, a4, a5, a6);
 }
 
 PRX_INTERFACE int sceRtcSetCurrentTick(const SceRtcTick* pTick) {
@@ -493,7 +503,7 @@ PRX_INTERFACE int sceRtcGetCurrentClockLocalTime(SceRtcDateTime* pTime) {
 PRX_INTERFACE int sceRtcConvertUtcToLocalTime(const SceRtcTick* pUtc, SceRtcTick* pLocalTime) {
     if (pUtc == NULL) return SCE_RTC_ERROR_INVALID_POINTER;
     int timezone_minutes;
-    int rc = rtc_current_timezone_offset(&timezone_minutes);
+    int rc = rtc_timezone_offset_for_utc_seconds(rtc_unix_seconds_from_tick(pUtc), &timezone_minutes);
     if (rc < 0) return rc;
     return rtc_tick_add_checked(pLocalTime, pUtc, (int64_t)timezone_minutes * kTicksPerMinute);
 }
@@ -501,7 +511,7 @@ PRX_INTERFACE int sceRtcConvertUtcToLocalTime(const SceRtcTick* pUtc, SceRtcTick
 PRX_INTERFACE int sceRtcConvertLocalTimeToUtc(const SceRtcTick* pLocalTime, SceRtcTick* pUtc) {
     if (pLocalTime == NULL) return SCE_RTC_ERROR_INVALID_POINTER;
     int timezone_minutes;
-    int rc = rtc_current_local_to_utc_offset(&timezone_minutes);
+    int rc = rtc_local_to_utc_offset_for_local_seconds(rtc_unix_seconds_from_tick(pLocalTime), &timezone_minutes);
     if (rc < 0) return rc;
     return sceRtcTickAddMinutes(pUtc, pLocalTime, timezone_minutes);
 }
@@ -761,8 +771,8 @@ PRX_INTERFACE int sceRtcGetDaysInMonth(int year, int month) {
 }
 
 PRX_INTERFACE int sceRtcGetDayOfWeek(int year, int month, int day) {
-    if (year <= 0) return SCE_RTC_ERROR_INVALID_YEAR;
     if (month < 1 || month > 12) return SCE_RTC_ERROR_INVALID_MONTH;
+    if (year < 1 || year > 9999) return SCE_RTC_ERROR_INVALID_YEAR;
     if (day < 1 || day > rtc_days_in_month_unchecked(year, month)) return SCE_RTC_ERROR_INVALID_DAY;
     return (int)((rtc_days_before_year(year) + rtc_days_before_month(year, month) + day) % 7);
 }
@@ -835,8 +845,8 @@ PRX_INTERFACE int sceRtcGetTick(const SceRtcDateTime* pTime, SceRtcTick* pTick) 
 }
 
 PRX_INTERFACE int sceRtcSetTime_t(SceRtcDateTime* pTime, time_t llTime) {
-    if (pTime == NULL) return SCE_RTC_ERROR_INVALID_POINTER;
     if (llTime < 0) return SCE_RTC_ERROR_INVALID_VALUE;
+    if (pTime == NULL) return SCE_RTC_ERROR_INVALID_POINTER;
     SceRtcTick tick;
     tick.tick = (uint64_t)((int64_t)llTime * kTicksPerSecond) + kUnixEpochTick;
     return sceRtcSetTick(pTime, &tick);
