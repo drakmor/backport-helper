@@ -103,8 +103,9 @@ SceKernelModule sceKernelLoadStartModuleForSysmodule_hook(const char* moduleFile
                                                           int* pRes);
 
 constexpr size_t kMaxHookSpecs = 32;
-constexpr size_t kMaxLateHookSpecs = 32;
-constexpr size_t kMaxInlineDetours = kMaxHookSpecs + kMaxLateHookSpecs;
+constexpr size_t kMaxLateHookSpecs = 256;
+constexpr size_t kMaxRawHookSpecs = 8;
+constexpr size_t kMaxInlineDetours = kMaxHookSpecs + kMaxLateHookSpecs + kMaxRawHookSpecs;
 constexpr size_t kMaxTrampolinePages = (kMaxInlineDetours + kTrampolineSlotsPerPage - 1u) / kTrampolineSlotsPerPage;
 constexpr size_t kMaxLoadedModuleScan = 0x400;
 
@@ -112,6 +113,8 @@ InstalledHook g_hooks[kMaxHookSpecs] = {};
 size_t g_hookCount = 0;
 LateFunctionHook g_lateHooks[kMaxLateHookSpecs] = {};
 size_t g_lateHookCount = 0;
+InlineDetour g_rawHooks[kMaxRawHookSpecs] = {};
+size_t g_rawHookCount = 0;
 SceKernelModule g_loadedModuleScan[kMaxLoadedModuleScan] = {};
 KernelModuleInfoCompat g_loadedModuleInfo = {};
 alignas(SCE_KERNEL_PAGE_SIZE) uint8_t g_trampolineStorage[kMaxTrampolinePages][kTrampolinePageSize] = {};
@@ -332,6 +335,121 @@ bool append_abs_cond_jump(uint8_t* dst, size_t& dstLen, size_t dstCap, uint8_t o
     return true;
 }
 
+bool append_mov_r64_imm64(uint8_t* dst, size_t& dstLen, size_t dstCap, uint8_t reg, uintptr_t value) {
+    constexpr size_t kMovR64Imm64Size = 10;
+    if (dstLen + kMovR64Imm64Size > dstCap) {
+        return false;
+    }
+    uint8_t* out = dst + dstLen;
+    out[0] = static_cast<uint8_t>(0x48u | ((reg & 8u) ? 0x01u : 0x00u));
+    out[1] = static_cast<uint8_t>(0xb8u + (reg & 7u));
+    store_u64_le(out + 2, value);
+    dstLen += kMovR64Imm64Size;
+    return true;
+}
+
+bool append_push_reg64(uint8_t* dst, size_t& dstLen, size_t dstCap, uint8_t reg) {
+    const size_t size = (reg & 8u) ? 2u : 1u;
+    if (dstLen + size > dstCap) {
+        return false;
+    }
+    uint8_t* out = dst + dstLen;
+    if (reg & 8u) {
+        out[0] = 0x41;
+        out[1] = static_cast<uint8_t>(0x50u + (reg & 7u));
+    } else {
+        out[0] = static_cast<uint8_t>(0x50u + reg);
+    }
+    dstLen += size;
+    return true;
+}
+
+bool append_pop_reg64(uint8_t* dst, size_t& dstLen, size_t dstCap, uint8_t reg) {
+    const size_t size = (reg & 8u) ? 2u : 1u;
+    if (dstLen + size > dstCap) {
+        return false;
+    }
+    uint8_t* out = dst + dstLen;
+    if (reg & 8u) {
+        out[0] = 0x41;
+        out[1] = static_cast<uint8_t>(0x58u + (reg & 7u));
+    } else {
+        out[0] = static_cast<uint8_t>(0x58u + reg);
+    }
+    dstLen += size;
+    return true;
+}
+
+uint8_t scratch_reg_for(uint8_t reg) {
+    return reg == 11 ? 10 : 11;
+}
+
+bool append_mov_r64_ptr_abs64(uint8_t* dst,
+                              size_t& dstLen,
+                              size_t dstCap,
+                              uint8_t reg,
+                              uintptr_t absolute) {
+    const uint8_t scratch = scratch_reg_for(reg);
+    constexpr size_t kMaxSize = 2 + 10 + 3 + 2;
+    if (dstLen + kMaxSize > dstCap) {
+        return false;
+    }
+    if (!append_push_reg64(dst, dstLen, dstCap, scratch) ||
+        !append_mov_r64_imm64(dst, dstLen, dstCap, scratch, absolute)) {
+        return false;
+    }
+
+    uint8_t* out = dst + dstLen;
+    out[0] = static_cast<uint8_t>(0x48u |
+                                  ((reg & 8u) ? 0x04u : 0x00u) |
+                                  ((scratch & 8u) ? 0x01u : 0x00u));
+    out[1] = 0x8b;
+    out[2] = static_cast<uint8_t>(((reg & 7u) << 3u) | (scratch & 7u));
+    dstLen += 3;
+    return append_pop_reg64(dst, dstLen, dstCap, scratch);
+}
+
+bool append_cmp_ptr_abs64_r64(uint8_t* dst,
+                              size_t& dstLen,
+                              size_t dstCap,
+                              uint8_t reg,
+                              uintptr_t absolute) {
+    const uint8_t scratch = scratch_reg_for(reg);
+    constexpr size_t kMaxSize = 2 + 10 + 3 + 2;
+    if (dstLen + kMaxSize > dstCap) {
+        return false;
+    }
+    if (!append_push_reg64(dst, dstLen, dstCap, scratch) ||
+        !append_mov_r64_imm64(dst, dstLen, dstCap, scratch, absolute)) {
+        return false;
+    }
+
+    uint8_t* out = dst + dstLen;
+    out[0] = static_cast<uint8_t>(0x48u |
+                                  ((reg & 8u) ? 0x04u : 0x00u) |
+                                  ((scratch & 8u) ? 0x01u : 0x00u));
+    out[1] = 0x39;
+    out[2] = static_cast<uint8_t>(((reg & 7u) << 3u) | (scratch & 7u));
+    dstLen += 3;
+    return append_pop_reg64(dst, dstLen, dstCap, scratch);
+}
+
+bool append_rip_rel_as_abs64(uint8_t* dst,
+                             size_t& dstLen,
+                             size_t dstCap,
+                             uint8_t opcode,
+                             uint8_t reg,
+                             uintptr_t absolute) {
+    if (opcode == 0x8b) {
+        return append_mov_r64_ptr_abs64(dst, dstLen, dstCap, reg, absolute);
+    }
+    if (opcode == 0x39) {
+        return append_cmp_ptr_abs64_r64(dst, dstLen, dstCap, reg, absolute);
+    }
+    (void)absolute;
+    return true;
+}
+
 bool relocate_instruction(uint8_t* dst,
                           size_t& dstLen,
                           size_t dstCap,
@@ -358,14 +476,22 @@ bool relocate_instruction(uint8_t* dst,
         return false;
     }
 
-    const size_t outOffset = dstLen;
-    if (!append_bytes(dst, dstLen, dstCap, src, hs.len)) {
-        return false;
-    }
-
     if ((hs.flags & F_RIP_RELATIVE) != 0) {
         uintptr_t absolute = 0;
         if (!hde64_rip_absolute(src, srcIp, &hs, &absolute)) {
+            return false;
+        }
+        if (hs.meta == HDE64_META_RIP_REL_LEA64) {
+            return append_mov_r64_imm64(dst, dstLen, dstCap, hs.operand_reg, absolute);
+        }
+        if (hs.meta == HDE64_META_RIP_REL_MOV_R64_PTR) {
+            return append_rip_rel_as_abs64(dst, dstLen, dstCap, 0x8b, hs.operand_reg, absolute);
+        }
+        if (hs.meta == HDE64_META_RIP_REL_CMP_PTR_R64) {
+            return append_rip_rel_as_abs64(dst, dstLen, dstCap, 0x39, hs.operand_reg, absolute);
+        }
+        const size_t outOffset = dstLen;
+        if (!append_bytes(dst, dstLen, dstCap, src, hs.len)) {
             return false;
         }
         const int64_t newDisp64 = static_cast<int64_t>(absolute) - static_cast<int64_t>(dstIp + hs.len);
@@ -373,8 +499,9 @@ bool relocate_instruction(uint8_t* dst,
             return false;
         }
         store_i32_le(dst + outOffset + hs.disp_offset, static_cast<int32_t>(newDisp64));
+        return true;
     }
-    return true;
+    return append_bytes(dst, dstLen, dstCap, src, hs.len);
 }
 
 bool install_inline_detour(InlineDetour& detour, void* target, void* replacement) {
@@ -882,6 +1009,14 @@ extern "C" int hooksUninstall(void) {
     if (!uninstall_tiny_detour(g_loadStartModuleForSysmoduleDetour)) {
         ++failed;
     }
+    for (size_t i = g_rawHookCount; i > 0; --i) {
+        if (!uninstall_inline_detour(g_rawHooks[i - 1])) {
+            ++failed;
+        }
+    }
+    if (failed == 0) {
+        g_rawHookCount = 0;
+    }
     for (size_t i = g_lateHookCount; i > 0; --i) {
         if (!uninstall_inline_detour(g_lateHooks[i - 1].detour)) {
             ++failed;
@@ -916,4 +1051,45 @@ extern "C" void* hookGetOriginalLateDlsymFunction(const char* symbol) {
         return nullptr;
     }
     return hook->detour.installed ? hook->detour.trampoline : hook->detour.target;
+}
+
+extern "C" int hookInstallAbsolute(void* target, void* replacement, void** originalOut) {
+    if (originalOut) {
+        *originalOut = nullptr;
+    }
+    if (!target || !replacement) {
+        klog_hook_result("<absolute>", "invalid", target, nullptr);
+        return SCE_RTC_ERROR_NOT_SUPPORTED;
+    }
+
+    for (size_t i = 0; i < g_rawHookCount; ++i) {
+        InlineDetour& hook = g_rawHooks[i];
+        if (hook.target != target) {
+            continue;
+        }
+        if (originalOut) {
+            *originalOut = hook.trampoline;
+        }
+        klog_hook_result("<absolute>", hook.installed ? "existing" : "failed", target, hook.trampoline);
+        return hook.installed ? SCE_OK : SCE_RTC_ERROR_NOT_SUPPORTED;
+    }
+
+    if (g_rawHookCount >= kMaxRawHookSpecs) {
+        klog_hook_result("<absolute>", "full", target, nullptr);
+        return SCE_RTC_ERROR_NOT_SUPPORTED;
+    }
+
+    InlineDetour& hook = g_rawHooks[g_rawHookCount];
+    if (!install_inline_detour(hook, target, replacement)) {
+        klog_hook_result("<absolute>", "failed", target, nullptr);
+        hook = {};
+        return SCE_RTC_ERROR_NOT_SUPPORTED;
+    }
+
+    ++g_rawHookCount;
+    if (originalOut) {
+        *originalOut = hook.trampoline;
+    }
+    klog_hook_result("<absolute>", "installed", hook.target, hook.trampoline);
+    return SCE_OK;
 }
