@@ -15,7 +15,6 @@
 #include <np/np_session_signaling.h>
 #include <np/np_webapi2.h>
 #include <np_commerce_dialog.h>
-#include <signin_dialog.h>
 #include <stdint.h>
 #include <stdarg.h>
 #include <stdio.h>
