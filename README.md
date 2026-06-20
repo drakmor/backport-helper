@@ -63,10 +63,17 @@ msbuild libSceRtc.sln /p:Configuration=Backport13 /p:Platform=Prospero /p:Backpo
 
 The generic runtime hook engine lives in `hooks.cpp`. Concrete backport hooks
 live in `backport_hooks.cpp`. The module installs them from `module_start` and
-removes them from `module_stop`. Add new problematic functions to the
-`g_backportHooks[]` table with the symbol name, imported target pointer, and
-matching `*_hook` replacement. Use `hookGetOriginalFunction("symbol")` inside a
-hook when the replacement needs to forward to the original trampoline.
+removes them from `module_stop`. The hook engine patches the target function
+body, creates an executable trampoline for the stolen prologue, relocates
+relative/RIP-relative instructions where supported, and logs install status to
+kernel debug output.
+
+Add new always-available hooks to the `g_backportHooks[]` table with the symbol
+name, imported target pointer, matching `*_hook` replacement, and an `optional`
+flag. Required hook failures abort installation and roll back already installed
+hooks; optional hook failures are logged and ignored. Use
+`hookGetOriginalFunction("symbol")` inside a hook when the replacement needs to
+forward to the original trampoline.
 
 For functions from modules loaded after this PRX, add entries to
 `g_lateDlsymHooks[]`. The hook engine scans modules that are already loaded and
