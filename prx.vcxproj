@@ -198,6 +198,7 @@
     <ClCompile Include="backports.cpp" />
     <ClCompile Include="hde64.cpp" />
     <ClCompile Include="hooks.cpp" />
+    <ClCompile Include="online.cpp" />
     <ClCompile Include="rtc.cpp" />
   </ItemGroup>
   <ItemGroup>
